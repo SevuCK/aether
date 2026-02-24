@@ -87,7 +87,3 @@ If `npm run dev` fails on a fresh setup, check these common environment issues:
     ```bash
     LIBGL_ALWAYS_SOFTWARE=1 npm run dev
     ```
-
-**3. "Unable to find Electron app"**
-* **Cause:** `package.json` might be missing the entry point definition.
-* **Fix:** Ensure `"main": "electron.js"` is present in your `package.json`.
