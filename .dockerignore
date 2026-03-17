@@ -1,0 +1,15 @@
+# Frontend and Node
+src-frontend/
+node_modules/
+npm-debug.log
+
+# DB
+*.db
+*.aetherdb
+*.sqlite3
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.env

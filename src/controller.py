@@ -1,11 +1,15 @@
 import logging
 import json
 from flask import Flask, request, jsonify
+from dbmgr import DatabaseManager
+from flask_cors import CORS
 
 app = Flask(__name__)
+CORS(app)
 
 log = logging.getLogger('werkzeug')
 log.setLevel(logging.ERROR)
+app.logger.setLevel(logging.INFO)
 
 db_manager = None
 network_utility = None
@@ -163,16 +167,16 @@ def receive_message_from_peer():
     text = data.get('text')
     timestamp = data.get('timestamp')
 
-    print(f"\n[Tor P2P] Neue Nachricht empfangen von {sender_onion}")
+    app.logger.info(f"\n[Tor P2P] New message from {sender_onion}")
 
     # check if chat with onion addr exists
     chat_id = db_manager.get_chat_id_by_onion(sender_onion)
 
     # create cintact if unknown otherwise message will be dropped immediately
     if not chat_id:
-        print("[*] Unbekannter Absender. Erstelle neuen Kontakt...")
+        app.logger.info("[*] Unknown sender. Creating new contact...")
         contact_id, chat_id = db_manager.create_contact(
-            "Unbekannt", sender_onion)
+            "unknown", sender_onion)
 
     # save msg
     if chat_id:
@@ -194,42 +198,80 @@ def get_system_info():
     }), 200
 
 
+# ==========================================
+# AUTH ENDPOINTS
+# ==========================================
+
+@app.route('/auth/register', methods=['POST'])
+def register():
+    data = request.json
+    username = data.get('username')
+    password = data.get('password') # placeholder for SQLCipher key
+    
+    if not username:
+        return jsonify({"error": "Username is required"}), 400
+        
+    db_file = f"{username}.aetherdb"
+    temp_db = DatabaseManager(db_file) # initialize User DB
+    return jsonify({"status": "success", "message": "Profile created."}), 201
+
+@app.route('/auth/login', methods=['POST'])
+def login():
+    global db_manager, network_utility, my_onion_address
+    data = request.json
+    username = data.get('username')
+    
+    if not username:
+        return jsonify({"error": "Username is required"}), 400
+        
+    app.logger.info(f"[*] Login attempt for user: {username}")
+    
+    db_file = f"{username}.aetherdb"
+    db_manager = DatabaseManager(db_file)
+    
+    identity = db_manager.load_identity()
+    
+    if identity and my_onion_address == identity['onion_address']:
+        app.logger.info("[*] Tor Service already runing for this user. Skipping Bootstrapping.")
+        return jsonify({"status": "success", "message": "Database unlocked."}), 200
+
+    # delete old Tor instance from memory if present upon ogin
+    if my_onion_address and network_utility and hasattr(network_utility, 'controller'):
+        try:
+            network_utility.controller.remove_ephemeral_hidden_service(my_onion_address)
+            app.logger.info(f"[*] Deleted Tor-Service ({my_onion_address}) from memory")
+        except Exception as e:
+            app.logger.warning(f"[*] Error removing old Tor Service: {e}")
+    
+    if identity:
+        app.logger.info("[*] Load existing Tor identity...")
+        onion, key_type, private_key = network_utility.start_onion_service(
+            flask_port=5000,
+            key_type=identity['key_type'],
+            private_key=identity['private_key']
+        )
+    else:
+        app.logger.info("[*] Creating new Tor Identity for this user...")
+        onion, key_type, private_key = network_utility.start_onion_service(flask_port=5000)
+        if onion:
+            db_manager.save_identity(onion, key_type, private_key)
+            
+    if onion:
+        my_onion_address = onion
+        return jsonify({"status": "success", "message": "Database unlocked."}), 200
+    else:
+        return jsonify({"error": "Tor Service failed to start"}), 500
+
 
 # ==========================================
 # RUNNER
 # ==========================================
-def run_flask_server(port, db, net_util):
-    """Startet den Flask Server, initialisiert Tor und injiziert die Abhängigkeiten."""
-    global db_manager, network_utility, my_onion_address
-    db_manager = db
+def run_flask_server(port, net_util):
+    """Starts Flask Server and only injetcs netutil"""
+    global network_utility
     network_utility = net_util
 
-    print(f"[*] Initialize System...")
-
-    # Tor init
-    if network_utility and db_manager:
-        identity = db_manager.load_identity()
-
-        if identity:
-            print("[*] Load existing Tor identity...")
-            onion, key_type, private_key = network_utility.start_onion_service(
-                flask_port=port,
-                key_type=identity['key_type'],
-                private_key=identity['private_key']
-            )
-        else:
-            print("[*] Create new Tor identity...")
-            onion, key_type, private_key = network_utility.start_onion_service(
-                flask_port=port)
-            if onion:
-                db_manager.save_identity(onion, key_type, private_key)
-
-        if onion:
-            my_onion_address = onion
-            print(
-                f"[*] System ready. User's address: {my_onion_address}.onion")
-        else:
-            print("[!] ERROR: Tor Service couldn't start")
-
-    print(f"[*] Start API Controller on Port {port}...")
+    app.logger.info(f"[*] Initializing System... waiting for user login to start Tor service.")
+    app.logger.info(f"[*] Start API Controller on Port {port}...")
+    
     app.run(host='0.0.0.0', port=port, use_reloader=False)
