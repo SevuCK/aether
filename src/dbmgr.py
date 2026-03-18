@@ -206,7 +206,7 @@ class DatabaseManager:
                     "is_group": row['is_group'],
                     "title": row['title'],
                     "display_name": row['display_name'],
-                    "contact_id": row['contact_id'],
+                    "contact_ids": [{"contact_id": row['contact_id']}],
                 }
                 # if messages already exist, then attach last_message
                 if row['content'] is not None:
