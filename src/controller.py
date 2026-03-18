@@ -1,5 +1,6 @@
 import logging
-import json
+import uuid
+from datetime import datetime
 from flask import Flask, request, jsonify
 from dbmgr import DatabaseManager
 from flask_cors import CORS
@@ -16,194 +17,32 @@ network_utility = None
 my_onion_address = None
 
 # ==========================================
-# CHATS Endpoints (Frontend -> Backend)
+# SECURITY MIDDLEWARE (IPC)
 # ==========================================
-@app.route('/allChats/', methods=['GET'])
-def get_all_chats():
-    """Gibt alle Chats inklusive der letzten Nachricht zurück."""
-    if not db_manager:
-        return jsonify({"error": "Database not initialized"}), 500
+# Ephemeraler API-Key 
+EPHEMERAL_API_KEY = str(uuid.uuid4()) 
+# disabled for now
+REQUIRE_API_KEY = False 
 
-    chats = db_manager.get_all_chats_with_last_message()
-    return jsonify({"chats": chats}), 200
-
-
-@app.route('/chat/<int:chat_id>', methods=['GET'])
-def get_chat_messages(chat_id):
-    """Gibt alle Nachrichten eines spezifischen Chats zurück."""
-    if not db_manager:
-        return jsonify({"error": "Database not initialized"}), 500
-
-    messages = db_manager.get_messages_for_chat(chat_id)
-    return jsonify({"chat_id": chat_id, "messages": messages}), 200
-
-
-@app.route('/chat/<int:chat_id>', methods=['DELETE'])
-def clear_chat_history(chat_id):
-    """Löscht den gesamten Nachrichtenverlauf eines Chats."""
-    if not db_manager:
-        return jsonify({"error": "Database not initialized"}), 500
-
-    db_manager.clear_chat_history(chat_id)
-    return jsonify({"status": "success", "message": f"History for chat {chat_id} cleared"}), 200
-
-
-@app.route('/chat/export/<int:chat_id>', methods=['GET'])
-def export_chat(chat_id):
-    """Exportiert einen spezifischen Chat als JSON."""
-    if not db_manager:
-        return jsonify({"error": "Database not initialized"}), 500
-
-    messages = db_manager.get_messages_for_chat(chat_id)
-    export_data = {
-        "chat_id": chat_id,
-        "messages": messages
-    }
-    # TECH DEBT: perhaps return downloadable file in the future
-    return jsonify({"status": "success", "export": export_data}), 200
-
+@app.before_request
+def require_api_key():
+    """Check API-key before every frontend request"""
+    if request.path == '/api/receive_message':
+        return
+        
+    if REQUIRE_API_KEY:
+        key = request.headers.get('X-Aether-API-Key')
+        if key != EPHEMERAL_API_KEY:
+            app.logger.warning(f"[*] Unauthorized API access attempt. Key provided: {key}")
+            return jsonify({"error": "Unauthorized. Invalid X-Aether-API-Key."}), 401
 
 # ==========================================
-# CONTACTS Endpoints (Frontend -> Backend)
+# AUTH ENDPOINTS (Frontend -> Backend)
 # ==========================================
-@app.route('/contacts', methods=['POST'])
-def create_contact():
-    """Erstellt einen neuen Kontakt."""
-    data = request.json
-    if not data or not data.get('alias') or not data.get('onion_adress'):
-        return jsonify({"error": "alias and onion_adress are required"}), 400
-
-    contact_id, chat_id = db_manager.create_contact(
-        data['alias'], data['onion_adress'])
-
-    if contact_id is None:
-        return jsonify({"error": "Contact with this onion address already exists"}), 409
-
-    return jsonify({"status": "success", "contact_id": contact_id, "chat_id": chat_id}), 201
-
-
-@app.route('/contacts/<int:contact_id>', methods=['DELETE'])
-def delete_contact(contact_id):
-    """Löscht einen Kontakt und den dazugehörigen Chat (via CASCADE)."""
-    db_manager.delete_contact(contact_id)
-    return jsonify({"status": "success", "message": f"Contact {contact_id} deleted"}), 200
-
-
-@app.route('/contacts/alias', methods=['POST'])
-def update_contact_alias():
-    """Aktualisiert den Alias eines existierenden Kontakts."""
-    data = request.json
-    if not data or not data.get('contact_id') or not data.get('alias'):
-        return jsonify({"error": "contact_id and alias are required"}), 400
-
-    db_manager.update_alias(data['contact_id'], data['alias'])
-    return jsonify({"status": "success"}), 200
-
-
-# ==========================================
-# MESSAGES Endpoints (Frontend -> Backend)
-# ==========================================
-@app.route('/chats/messages/<int:chat_id>/<int:message_id>', methods=['DELETE'])
-def delete_specific_message(chat_id, message_id):
-    """Löscht eine spezifische Nachricht aus einem Chat."""
-    db_manager.delete_message(message_id, chat_id)
-    return jsonify({"status": "success", "chat_id": chat_id, "message_id": message_id}), 200
-
-
-@app.route('/chats/messages', methods=['POST'])
-def send_message():
-    """
-    Speichert eine ausgehende Nachricht und versendet sie über das Tor-Netzwerk.
-    """
-    data = request.json
-    if not data or not data.get('chat_id') or not data.get('message'):
-        return jsonify({"error": "chat_id and message object are required"}), 400
-
-    chat_id = data['chat_id']
-    msg_content = data['message'].get('content')
-    msg_timestamp = data['message'].get('timestamp')
-
-    # get contact addr from db
-    target_onion = db_manager.get_onion_for_chat(chat_id)
-    if not target_onion:
-        return jsonify({"error": "Chat or associated contact not found"}), 404
-
-    # send via tor
-    payload = {
-        "sender_onion": my_onion_address,
-        "text": msg_content,
-        "timestamp": msg_timestamp
-    }
-
-    success = False
-    if network_utility:
-        success = network_utility.send_message(target_onion, payload)
-
-    if success:
-        # mark as "sent" in db
-        db_manager.save_message(
-            chat_id, msg_content, msg_timestamp, status="OUTGOING_RECEIVED", sender="me")
-        return jsonify({"status": "success", "message": "Message sent via Tor"}), 200
-    else:
-        # mark as "error" in db
-        db_manager.save_message(chat_id, msg_content,
-                                msg_timestamp, status="FAILED", sender="me")
-        return jsonify({"error": "Failed to send message via Tor network"}), 503
-
-# ==========================================
-# P2P Endpoints (Tor-Network -> Backend)
-# ==========================================
-@app.route('/api/receive_message', methods=['POST'])
-def receive_message_from_peer():
-    """
-    Dieser Endpunkt wird von ANDEREN Tor-Clients aufgerufen.
-    Der Traffic kommt via Tor Hidden Service rein.
-    """
-    data = request.json
-    if not data or not data.get('sender_onion') or not data.get('text'):
-        return jsonify({"error": "Invalid payload"}), 400
-
-    sender_onion = data.get('sender_onion')
-    text = data.get('text')
-    timestamp = data.get('timestamp')
-
-    app.logger.info(f"\n[Tor P2P] New message from {sender_onion}")
-
-    # check if chat with onion addr exists
-    chat_id = db_manager.get_chat_id_by_onion(sender_onion)
-
-    # create cintact if unknown otherwise message will be dropped immediately
-    if not chat_id:
-        app.logger.info("[*] Unknown sender. Creating new contact...")
-        contact_id, chat_id = db_manager.create_contact(
-            "unknown", sender_onion)
-
-    # save msg
-    if chat_id:
-        db_manager.save_message(chat_id, text, timestamp,
-                                status="INCOMING_UNREAD", sender=sender_onion)
-        return jsonify({"status": "ok"}), 200
-    else:
-        return jsonify({"error": "Internal database error"}), 500
-
-# ==========================================
-# SYSTEM / SETUP
-# ==========================================
-@app.route('/system/info', methods=['GET'])
-def get_system_info():
-    """Gibt dem Frontend die eigene Onion-Adresse zurück."""
-    return jsonify({
-        "status": "ready" if my_onion_address else "starting",
-        "onion_address": my_onion_address
-    }), 200
-
-
-# ==========================================
-# AUTH ENDPOINTS
-# ==========================================
-
-@app.route('/auth/register', methods=['POST'])
+@app.route('/api/v1/auth/register', methods=['POST'])
 def register():
+    """Create new Profile and Tor-Identity"""
+    global db_manager, network_utility, my_onion_address
     data = request.json
     username = data.get('username')
     password = data.get('password') # placeholder for SQLCipher key
@@ -212,11 +51,25 @@ def register():
         return jsonify({"error": "Username is required"}), 400
         
     db_file = f"{username}.aetherdb"
-    temp_db = DatabaseManager(db_file) # initialize User DB
-    return jsonify({"status": "success", "message": "Profile created."}), 201
+    db_manager = DatabaseManager(db_file) 
+    
+    # generate Tor Keys and Onion Addresss
+    app.logger.info("[*] Creating new Tor Identity for new user...")
+    onion, key_type, private_key = network_utility.start_onion_service(flask_port=5000)
+    if onion:
+        db_manager.save_identity(onion, private_key, username)
+        my_onion_address = onion
+        return jsonify({
+            "status": "success", 
+            "message": "Profile created.", 
+            "onion_address": onion
+        }), 201
+    else:
+        return jsonify({"error": "Failed to generate Tor Identity"}), 500
 
-@app.route('/auth/login', methods=['POST'])
+@app.route('/api/v1/auth/login', methods=['POST'])
 def login():
+    """Unlock DB and load Tor-Keys into memory"""
     global db_manager, network_utility, my_onion_address
     data = request.json
     username = data.get('username')
@@ -228,50 +81,262 @@ def login():
     
     db_file = f"{username}.aetherdb"
     db_manager = DatabaseManager(db_file)
-    
     identity = db_manager.load_identity()
     
     if identity and my_onion_address == identity['onion_address']:
-        app.logger.info("[*] Tor Service already runing for this user. Skipping Bootstrapping.")
-        return jsonify({"status": "success", "message": "Database unlocked."}), 200
+        return jsonify({"status": "success", "message": "Database unlocked.", "onion_address": my_onion_address}), 200
 
-    # delete old Tor instance from memory if present upon ogin
+    # delete old Tor instance from memory if present upon login
     if my_onion_address and network_utility and hasattr(network_utility, 'controller'):
         try:
             network_utility.controller.remove_ephemeral_hidden_service(my_onion_address)
-            app.logger.info(f"[*] Deleted Tor-Service ({my_onion_address}) from memory")
         except Exception as e:
             app.logger.warning(f"[*] Error removing old Tor Service: {e}")
     
     if identity:
-        app.logger.info("[*] Load existing Tor identity...")
+        app.logger.info("[*] Loading existing Tor identity...")
         onion, key_type, private_key = network_utility.start_onion_service(
             flask_port=5000,
-            key_type=identity['key_type'],
-            private_key=identity['private_key']
+            key_type="ED25519-V3", # Tor standard
+            private_key=identity['ed25519_private_key']
         )
-    else:
-        app.logger.info("[*] Creating new Tor Identity for this user...")
-        onion, key_type, private_key = network_utility.start_onion_service(flask_port=5000)
         if onion:
-            db_manager.save_identity(onion, key_type, private_key)
+            my_onion_address = onion
+            return jsonify({"status": "success", "message": "Database unlocked.", "onion_address": onion}), 200
             
-    if onion:
-        my_onion_address = onion
-        return jsonify({"status": "success", "message": "Database unlocked."}), 200
-    else:
-        return jsonify({"error": "Tor Service failed to start"}), 500
+    return jsonify({"error": "Tor Service failed to start or Identity missing"}), 500
 
+@app.route('/api/v1/auth/logout', methods=['POST'])
+def logout():
+    """Lock DB and delete Tor-Keys from memory"""
+    global db_manager, my_onion_address, network_utility
+    db_manager = None
+    my_onion_address = None
+    if network_utility and hasattr(network_utility, 'controller'):
+        # stop hidden service and clear state
+        pass 
+    app.logger.info("[*] User logged out. RAM wiped.")
+    return jsonify({"status": "success"}), 200
+
+# ==========================================
+# CONTACTS Endpoints (Frontend -> Backend)
+# ==========================================
+@app.route('/api/v1/contacts', methods=['GET'])
+def get_contacts():
+    """Return list of contacts"""
+    if not db_manager:
+        return jsonify({"error": "Database not initialized"}), 500
+        
+    with db_manager._get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, onion_address, display_name FROM contact")
+        contacts = [dict(row) for row in cursor.fetchall()]
+        
+    return jsonify(contacts), 200
+
+@app.route('/api/v1/contacts', methods=['POST'])
+def create_contact():
+    """Add new contact (TOFU)."""
+    if not db_manager:
+        return jsonify({"error": "Database not initialized"}), 500
+
+    data = request.json
+    if not data or not data.get('display_name') or not data.get('onion_address'):
+        return jsonify({"error": "display_name and onion_address are required"}), 400
+
+    contact_id, chat_id = db_manager.create_contact(data['display_name'], data['onion_address'])
+
+    if contact_id is None:
+        return jsonify({"error": "Contact with this onion address already exists"}), 409
+
+    return jsonify({
+        "id": contact_id, 
+        "onion_address": data['onion_address'], 
+        "display_name": data['display_name']
+    }), 201
+
+@app.route('/api/v1/contacts/<int:contact_id>', methods=['PUT'])
+def update_contact(contact_id):
+    """Refresh display_name of selected contact"""
+    if not db_manager:
+        return jsonify({"error": "Database not initialized"}), 500
+
+    data = request.json
+    if not data or not data.get('display_name'):
+        return jsonify({"error": "display_name is required"}), 400
+
+    db_manager.update_alias(contact_id, data['display_name'])
+    return jsonify({"status": "success"}), 200
+
+@app.route('/api/v1/contacts/<int:contact_id>', methods=['DELETE'])
+def delete_contact(contact_id):
+    """Delete contact and cascade to associated chats & messages"""
+    if not db_manager:
+        return jsonify({"error": "Database not initialized"}), 500
+
+    db_manager.delete_contact(contact_id)
+    return jsonify({"status": "success"}), 200
+
+# ==========================================
+# CHATS & MESSAGES Endpoints
+# ==========================================
+@app.route('/api/v1/chats', methods=['GET'])
+def get_all_chats():
+    """Return all Chats including each of their last message entry"""
+    if not db_manager:
+        return jsonify({"error": "Database not initialized"}), 500
+
+    chats = db_manager.get_all_chats_with_last_message()
+    return jsonify(chats), 200
+
+@app.route('/api/v1/chats/<int:chat_id>/messages', methods=['GET'])
+def get_chat_messages(chat_id):
+    """Return associated messages of chat_id"""
+    if not db_manager:
+        return jsonify({"error": "Database not initialized"}), 500
+
+    messages = db_manager.get_messages_for_chat(chat_id)
+    return jsonify(messages), 200
+
+@app.route('/api/v1/chats/<int:chat_id>', methods=['DELETE'])
+def clear_chat_history(chat_id):
+    """Clear chat history"""
+    if not db_manager:
+        return jsonify({"error": "Database not initialized"}), 500
+
+    db_manager.clear_chat_history(chat_id)
+    return jsonify({"status": "success"}), 200
+
+@app.route('/api/v1/messages', methods=['POST'])
+def send_message():
+    """
+    Queue outgoing message to DB (OUTGOING_CREATED).
+    Background-Worker then fetches messages to send via Tor
+    """
+    if not db_manager:
+        return jsonify({"error": "Database not initialized"}), 500
+
+    data = request.json
+    if not data or not data.get('chat_id') or not data.get('content'):
+        return jsonify({"error": "chat_id and content are required"}), 400
+
+    chat_id = data['chat_id']
+    content = data['content']
+    # UTC
+    timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ') 
+
+    msg_id = db_manager.save_message(
+        chat_id=chat_id, 
+        content=content, 
+        timestamp=timestamp, 
+        status="OUTGOING_CREATED", 
+        sender_contact_id=None # None = sent from local user
+    )
+
+    app.logger.info(f"[*] Frontend queued message for Chat {chat_id}")
+    
+    return jsonify({"message_id": msg_id, "status": "OUTGOING_CREATED"}), 201
+
+@app.route('/api/v1/messages/<int:message_id>', methods=['DELETE'])
+def delete_specific_message(message_id):
+    """Delete specific message"""
+    if not db_manager:
+        return jsonify({"error": "Database not initialized"}), 500
+        
+    with db_manager._get_conn() as conn:
+        conn.execute("DELETE FROM message WHERE id = ?", (message_id,))
+        conn.commit()
+    return jsonify({"status": "success"}), 200
+
+# ==========================================
+# SYSTEM, POLLING & EXPORT Endpoints
+# ==========================================
+@app.route('/api/v1/system/status', methods=['GET'])
+def get_system_status():
+    """Return Tor Daemon Bootstrap status"""
+    # Dummy logic: actual Tor progrss tracing should be done in netutil
+    return jsonify({
+        "tor_bootstrap_percent": 100 if my_onion_address else 0,
+        "status": "ready" if my_onion_address else "starting"
+    }), 200
+
+@app.route('/api/v1/system/sync', methods=['GET'])
+def system_sync():
+    """Polling Endpoint for svelte stores"""
+    if not db_manager:
+        return jsonify({"error": "Database not initialized"}), 500
+        
+    since = request.args.get('since', '1970-01-01T00:00:00Z')
+    
+    with db_manager._get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, chat_id, sender_contact_id, content, timestamp, status FROM message WHERE timestamp > ?", (since,))
+        new_messages = [dict(row) for row in cursor.fetchall()]
+        
+    return jsonify({
+        "new_messages": new_messages,
+        "status_updates": [] # placeholder for status changes by worker
+    }), 200
+
+@app.route('/api/v1/export', methods=['POST'])
+def export_profile():
+    """Generiert ein AES-verschlüsseltes Backup (Dummy-Implementierung)."""
+    return jsonify({"status": "success", "file_path": "/path/to/export.aetherbak"}), 200
+
+# ==========================================
+# P2P Endpoints (Tor-Network -> Backend)
+# NOT API Key protected
+# ==========================================
+@app.route('/api/receive_message', methods=['POST'])
+def receive_message_from_peer():
+    """This endpoint is called by external Tor Clients"""
+    data = request.json
+    if not data or not data.get('sender_onion') or not data.get('text'):
+        return jsonify({"error": "Invalid payload"}), 400
+
+    sender_onion = data.get('sender_onion')
+    text = data.get('text')
+    timestamp = data.get('timestamp') or datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    app.logger.info(f"\n[Tor P2P] New message from {sender_onion}")
+
+    if not db_manager:
+        return jsonify({"error": "Backend offline"}), 503
+
+    # find chat and contact id of sender
+    chat_id = db_manager.get_chat_id_by_onion(sender_onion)
+    contact_id = None
+    
+    with db_manager._get_conn() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM contact WHERE onion_address = ?", (sender_onion,))
+        row = cursor.fetchone()
+        if row: contact_id = row['id']
+
+    # unknown contact --> reject message (TOFU)
+    if not chat_id or not contact_id:
+        app.logger.warning("[*] Dropped message from unknown sender.")
+        return jsonify({"error": "Unauthorized / Unknown Contact"}), 403
+
+    db_manager.save_message(
+        chat_id=chat_id, 
+        content=text, 
+        timestamp=timestamp,
+        status="INCOMING_UNREAD", 
+        sender_contact_id=contact_id
+    )
+    
+    return jsonify({"status": "ok"}), 200
 
 # ==========================================
 # RUNNER
 # ==========================================
 def run_flask_server(port, net_util):
-    """Starts Flask Server and only injetcs netutil"""
     global network_utility
     network_utility = net_util
 
-    app.logger.info(f"[*] Initializing System... waiting for user login to start Tor service.")
+    app.logger.info(f"[*] Initializing System...")
+    app.logger.info(f"[*] Ephemeral API Key for Frontend: {EPHEMERAL_API_KEY}")
     app.logger.info(f"[*] Start API Controller on Port {port}...")
     
     app.run(host='0.0.0.0', port=port, use_reloader=False)

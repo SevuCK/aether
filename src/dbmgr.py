@@ -222,3 +222,19 @@ class DatabaseManager:
                 results.append(chat_obj)
                 
             return results
+        
+    # ==========================================
+    # WORKER METHODS
+    # ==========================================
+    def get_pending_messages(self):
+        """
+        searches all unsent outgoing messages
+        """
+        with self._get_conn() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, chat_id, content, timestamp, status 
+                FROM message 
+                WHERE status = 'OUTGOING_CREATED'
+            ''')
+            return [dict(row) for row in cursor.fetchall()]
