@@ -26,45 +26,59 @@ Given the severe threat model of our target audience (e.g., investigative journa
 
 The build and distribution processes are entirely automated to ensure reproducible builds and eliminate manual tampering risks during the compilation phase.
 
-### 3.1 Automated Build Process
+### 3.1 Automated Packaging Process
 
-Aether's primary target environments are security- and privacy-focused operating systems (e.g., Tails OS, Whonix). Therefore, official binary releases are exclusively built for **GNU/Linux**.
+Aether's primary target environments are security- and privacy-focused operating systems (e.g., Tails OS, Whonix). Therefore, official releases are exclusively targeted for **GNU/Linux**.
 
 The automated CD pipeline is triggered when a developer pushes a new version tag (e.g., `v1.0.0`) to the `main` branch:
 
-1. **Backend Bundling:** `PyInstaller` bundles the Python/Flask middleware, Tor wrappers and all dependencies into a standalone executable, freezing the Python environment.
-2. **Frontend Packaging:** `electron-builder` packages the Electron frontend and the bundled backend.
-3. **Artifact Generation:** The pipeline outputs a self-contained `.AppImage` file, ensuring out-of-the-box compatibility across major GNU/Linux distributions.
+1. **Archive Generation:** The pipeline bundles the frontend and backend components into a single `.tar.gz` archive.
 
 ### 3.2 Cryptographic Signing Strategy
 
 To protect users against supply-chain attacks (e.g., compromised GitHub servers), all releases are cryptographically signed.
 
-* **Current Automation (Beta Phase):** During the current project phase, the CI/CD pipeline automatically signs the release tags and the generated `.AppImage` binaries using a dedicated GPG key stored in GitHub Secrets.
-* **Future Transition (Production Maturity):** As the project matures and reaches a larger user base, the signing process will transition to an "offline signing" model. Automated CI/CD signing will be disabled, and core maintainers will download the reproducible builds, verify them, and sign the release archives locally to futher increase security.
+* **Current Automation (Beta Phase):** During the current project phase, the CI/CD pipeline automatically signs the release tags and the generated `.tar.gz` archives using a dedicated GPG key stored in GitHub Secrets.
+* **Future Transition (Production Maturity):** As the project matures and reaches a larger user base, the signing process will transition to an "offline signing" model. Automated CI/CD signing will be disabled, and core maintainers will download the release artifacts, verify them, and sign the release archives locally to futher increase security.
 
 ## 4. Delivery and Update Procedure
 
 Standard automatic background updates are considered a security risk in high-threat environments, as they can be exploited to silently push malicious payloads to targeted users.
 
-### 4.1 Update Checks via Tor
+Aether **does not** perform silent auto-updates, make background update checks, or display update notification banners. Users must proactively check for new releases, download the updated `.tar.gz` archive, verify its GPG signature, and follow the standard installation procedure to install the new version.
 
-Aether **does not** feature silent auto-updates. Instead, the application implements a privacy-preserving update notification system:
+## 5. Installation and Startup Procedure
 
-1. Upon application startup, the software queries the GitHub Releases API for new version tags.
-2. **Crucial Security Constraint:** To strictly prevent IP leaks (NFR-01), the Electron frontend does *not* make this HTTP request directly. The request is routed through the local Flask backend, which tunnels the API call exclusively through the local Tor SOCKS5 proxy.
-3. If a new version is found, a non-intrusive banner appears in the GUI informing the user. The user is instructed to download the new `.AppImage` and manually verify its GPG signature before execution.
+Because Aether relies on Python and Node.js, the application is not compiled into a standalone binary executable. Installation and operation workflows are identical for all users: simply execute the provided installation and startup scripts.
 
-## 5. Build from Source (Developer & Tech Enthusiast Experience)
+If you require a fully manual installation, you can follow this step-by-step procedure:
 
-For users who want to verify and compile the software themselves, we provide full access to the source code alongside a streamlined setup process.
+```
+* Download code *
+(Using the provided signed archive or by cloning the repo)
 
-To prevent cumbersome manual setups of virtual environments and node modules, we provide a cross-platform **Makefile**. Users can simply clone the repository and execute:
+* Install npm (if not already installed) *
+sudo apt update -y && sudo apt install npm -y
 
-* `make install`: Automatically sets up the Python `venv`, installs `pip` requirements, and runs `npm install`.
-* `make run`: Boots the local Tor mock, starts the Flask backend, and launches the Electron GUI in development mode.
+* Install docker (if not already installed) *
+curl -fsSL https://get.docker.com -o get-docker.sh && sudo sh get-docker.sh && sudo usermod -aG docker $USER && newgrp docker
 
-Additionally, for those who want to prefer a fully manual installation, we provide step-by-step instructions in our README.
+* build container (cwd = aether project root) *
+docker build --no-cache -t aether .
+
+* get npm packages (cwd = src-frontend) *
+npm install
+
+* End of install *
+
+* start frontend (cwd = src-frontend) *
+cd src-frontend && AETHER_API_PORT=5000 npm run dev
+
+* start backend (cwd = aether project root) *
+docker run -p 5000:5000 --name aether-client aether
+
+* End of startup *
+```
 
 ## 6. End-of-Life (EOL) & Sunset Strategy
 
