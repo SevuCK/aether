@@ -58,7 +58,7 @@ class DatabaseManager:
                                 "timestamp" DATETIME DEFAULT CURRENT_TIMESTAMP,
                                 "status" TEXT NOT NULL CHECK ("status" IN ('OUTGOING_CREATED', 'OUTGOING_RECEIVED', 'INCOMING_UNREAD', 'INCOMING_READ')),
                                 FOREIGN KEY ("chat_id") REFERENCES "chat"("id") ON DELETE CASCADE,
-                                FOREIGN KEY ("sender_contact_id") REFERENCES "contact"("id") ON DELETE SET NULL,
+                                FOREIGN KEY ("sender_contact_id") REFERENCES "contact"("id") ON DELETE CASCADE,
                                 CONSTRAINT "chk_sender_integrity" CHECK (
                                     ("status" IN ('OUTGOING_CREATED','OUTGOING_RECEIVED') AND "sender_contact_id" IS NULL) OR 
                                     ("status" IN ('INCOMING_UNREAD','INCOMING_READ') AND "sender_contact_id" IS NOT NULL)
