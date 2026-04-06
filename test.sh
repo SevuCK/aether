@@ -32,6 +32,9 @@ else
     echo "Please open manually: $URL1 and $URL2"
 fi
 
+echo "--- Linting Score ---"
+pylint src/ --rcfile=src/.pylintrc | grep "Your code has been rated"
+
 echo "================================================="
 echo "Test Environment is running in background"
 echo "to end test type and execute: docker compose -f docker-compose.test.yml down"
