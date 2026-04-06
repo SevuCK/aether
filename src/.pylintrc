@@ -1,0 +1,46 @@
+[MASTER]
+# Aether is an independent Python application, not a package.
+# We do not use __init__.py files in every directory.
+ignore-cvs=yes
+ignore=.git,__pycache__
+
+[MESSAGES CONTROL]
+# Disable rules that contradict our architecture or are overly pedantic for this scope.
+disable=
+    # Flask uses global variables extensively in our current architecture.
+    global-statement,
+    global-variable-not-assigned,
+    
+    invalid-name,
+    
+    missing-docstring,
+    
+    print-statement,
+    
+    broad-except,
+    
+    no-member,
+    
+    # SQLite connections via _get_conn are context managers but Pylint might misinterpret them.
+    not-context-manager,
+    
+    too-many-arguments,
+    too-many-locals,
+    too-many-branches,
+    too-many-statements,
+    too-many-return-statements,
+    too-many-instance-attributes,
+    too-many-public-methods
+
+[FORMAT]
+# line length defined in CONTRIBUTING.md
+max-line-length=88
+indent-string='    '
+indent-after-paren=4
+
+[DESIGN]
+max-public-methods=20
+
+[REPORTS]
+output-format=text
+reports=no
