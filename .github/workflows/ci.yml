@@ -74,10 +74,12 @@ jobs:
           submodules: recursive
 
       - name: SonarQube Scan
-        uses: sonarsource/sonarqube-scan-action@v5
+        uses: sonarsource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
         with:
           args: >
+            -Dsonar.projectKey=SevuCK_aether
+            -Dsonar.organization=sevuck
             -Dsonar.qualitygate.wait=true
