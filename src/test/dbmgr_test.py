@@ -9,26 +9,21 @@ def test_db():
     Erstellt für jeden Test eine frische, isolierte Datenbank als temporäre Datei.
     Dadurch beeinträchtigen sich die Tests nicht gegenseitig.
     """
-    # 1. Erstelle eine sichere temporäre Datei im Temp-Ordner des Betriebssystems
     fd, temp_path = tempfile.mkstemp(suffix=".aetherdb")
-    os.close(fd) # Dateideskriptor schließen, da SQLite die Datei selbst öffnet
+    os.close(fd) # Dateideskriptor schließen
     
-    # 2. Initialisiere den Manager mit dem echten temporären Dateipfad
     db = DatabaseManager(temp_path)
     
     yield db
     
-    # 3. Teardown: Lösche die Datenbank-Datei nach Abschluss des Tests spurlos
     if os.path.exists(temp_path):
         os.remove(temp_path)
 
 def test_save_and_load_identity(test_db):
     """Prüft, ob Tor-Identitäten korrekt gespeichert und geladen werden."""
-    # Arrange & Act
     test_db.save_identity("onion_test_123", "secret_priv_key", "Alice")
     identity = test_db.load_identity()
     
-    # Assert
     assert identity is not None
     assert identity["onion_address"] == "onion_test_123"
     assert identity["ed25519_private_key"] == "secret_priv_key"
@@ -42,14 +37,11 @@ def test_create_contact_success(test_db):
 
 def test_create_contact_duplicate(test_db):
     """Prüft, ob die Datenbank Duplikate bei Onion-Adressen verhindert."""
-    # Erster Kontakt sollte klappen
     test_db.create_contact("Bob", "bob_onion_address")
     
     # Zweiter Kontakt mit gleicher Onion-Adresse sollte fehlschlagen/None zurückgeben
-    # (Basierend auf der Logik in controller.py, wo None für 409 Conflict sorgt)
     result = test_db.create_contact("Copycat", "bob_onion_address")
     
-    # Entweder liefert dein Code (None, None) oder nur None zurück
     if isinstance(result, tuple):
         assert result[0] is None
     else:
@@ -57,7 +49,7 @@ def test_create_contact_duplicate(test_db):
 
 def test_save_and_get_message(test_db):
     """Prüft das Einfügen und Auslesen von Nachrichten."""
-    # Dummy Chat und Kontakt anlegen, um Foreign Keys zu befriedigen
+    # Dummy Chat und Kontakt
     contact_id, chat_id = test_db.create_contact("Charlie", "charlie_onion")
     
     # Nachricht speichern
