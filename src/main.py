@@ -1,7 +1,6 @@
-import sys
 import time
 import threading
-import controller # access to global variables
+import controller
 from netutil import NetworkUtility
 from controller import run_flask_server
 

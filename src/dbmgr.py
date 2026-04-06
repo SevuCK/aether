@@ -13,34 +13,34 @@ class DatabaseManager:
         # Enable secure deletion at the connection level
         conn.execute("PRAGMA secure_delete = ON;")
 
-        conn.row_factory = sqlite3.Row 
+        conn.row_factory = sqlite3.Row
         return conn
 
     def _init_db(self):
         """Initialize DB according to schema"""
         with self._get_conn() as conn:
             cursor = conn.cursor()
-            
+
             # Identity (user's Tor-Address & Keys - strict constraint: max 1 row)
             cursor.execute('''CREATE TABLE IF NOT EXISTS "identity" (
-                                "id" INTEGER PRIMARY KEY CHECK ("id" = 1), 
+                                "id" INTEGER PRIMARY KEY CHECK ("id" = 1),
                                 "onion_address" TEXT NOT NULL UNIQUE,
-                                "ed25519_private_key" TEXT NOT NULL, 
+                                "ed25519_private_key" TEXT NOT NULL,
                                 "display_name" TEXT)''')
-            
+
             # Contacts
             cursor.execute('''CREATE TABLE IF NOT EXISTS "contact" (
                                 "id" INTEGER PRIMARY KEY AUTOINCREMENT,
                                 "onion_address" TEXT NOT NULL UNIQUE,
                                 "noise_public_key" TEXT,
                                 "display_name" TEXT NOT NULL)''')
-            
+
             # Chats
             cursor.execute('''CREATE TABLE IF NOT EXISTS "chat" (
                                 "id" INTEGER PRIMARY KEY AUTOINCREMENT,
                                 "is_group" INTEGER NOT NULL DEFAULT 0 CHECK ("is_group" IN (0, 1)),
                                 "title" TEXT)''')
-            
+
             # Chat Member (Junction Table for n:m relations)
             cursor.execute('''CREATE TABLE IF NOT EXISTS "chat_member" (
                                 "chat_id" INTEGER NOT NULL,
@@ -48,7 +48,7 @@ class DatabaseManager:
                                 PRIMARY KEY ("chat_id", "contact_id"),
                                 FOREIGN KEY ("chat_id") REFERENCES "chat"("id") ON DELETE CASCADE,
                                 FOREIGN KEY ("contact_id") REFERENCES "contact"("id") ON DELETE CASCADE)''')
-            
+
             # Messages
             cursor.execute('''CREATE TABLE IF NOT EXISTS "message" (
                                 "id" INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,13 +60,13 @@ class DatabaseManager:
                                 FOREIGN KEY ("chat_id") REFERENCES "chat"("id") ON DELETE CASCADE,
                                 FOREIGN KEY ("sender_contact_id") REFERENCES "contact"("id") ON DELETE CASCADE,
                                 CONSTRAINT "chk_sender_integrity" CHECK (
-                                    ("status" IN ('OUTGOING_CREATED','OUTGOING_RECEIVED') AND "sender_contact_id" IS NULL) OR 
+                                    ("status" IN ('OUTGOING_CREATED','OUTGOING_RECEIVED') AND "sender_contact_id" IS NULL) OR
                                     ("status" IN ('INCOMING_UNREAD','INCOMING_READ') AND "sender_contact_id" IS NOT NULL)
                                 ))''')
-            
+
             # Indices for UI performance
             cursor.execute('CREATE INDEX IF NOT EXISTS "idx_message_chat_id" ON "message"("chat_id");')
-            
+
             conn.commit()
 
     # ==========================================
@@ -96,17 +96,17 @@ class DatabaseManager:
             cursor = conn.cursor()
             try:
                 # create contact
-                cursor.execute("INSERT INTO contact (display_name, onion_address, noise_public_key) VALUES (?, ?, ?)", 
+                cursor.execute("INSERT INTO contact (display_name, onion_address, noise_public_key) VALUES (?, ?, ?)",
                                (display_name, onion_address, noise_public_key))
                 contact_id = cursor.lastrowid
-                
+
                 # create direct chat
                 cursor.execute("INSERT INTO chat (is_group) VALUES (0)")
                 chat_id = cursor.lastrowid
-                
+
                 # link contact and chat
                 cursor.execute("INSERT INTO chat_member (chat_id, contact_id) VALUES (?, ?)", (chat_id, contact_id))
-                
+
                 conn.commit()
                 return contact_id, chat_id
             except sqlite3.IntegrityError:
@@ -150,8 +150,8 @@ class DatabaseManager:
     def save_message(self, chat_id, content, timestamp, status, sender_contact_id=None):
         with self._get_conn() as conn:
             cursor = conn.cursor()
-            cursor.execute('''INSERT INTO message (chat_id, sender_contact_id, content, timestamp, status) 
-                              VALUES (?, ?, ?, ?, ?)''', 
+            cursor.execute('''INSERT INTO message (chat_id, sender_contact_id, content, timestamp, status)
+                              VALUES (?, ?, ?, ?, ?)''',
                            (chat_id, sender_contact_id, content, timestamp, status))
             conn.commit()
             return cursor.lastrowid
@@ -183,27 +183,27 @@ class DatabaseManager:
             cursor = conn.cursor()
             # use subselect to get most recent message per chat
             query = '''
-                SELECT 
+                SELECT
                     ch.id as chat_id,
                     ch.is_group,
                     ch.title,
-                    c.id as contact_id, 
+                    c.id as contact_id,
                     c.display_name,
                     m.id as msg_id,
-                    m.content, 
-                    m.timestamp, 
+                    m.content,
+                    m.timestamp,
                     m.status
                 FROM chat ch
                 JOIN chat_member cm ON ch.id = cm.chat_id
                 JOIN contact c ON cm.contact_id = c.id
                 LEFT JOIN message m ON m.id = (
-                    SELECT id FROM message 
-                    WHERE chat_id = ch.id 
+                    SELECT id FROM message
+                    WHERE chat_id = ch.id
                     ORDER BY id DESC LIMIT 1
                 )
             '''
             cursor.execute(query)
-            
+
             results = []
             for row in cursor.fetchall():
                 chat_obj = {
@@ -223,11 +223,11 @@ class DatabaseManager:
                     }
                 else:
                     chat_obj["last_message"] = None
-                    
+
                 results.append(chat_obj)
-                
+
             return results
-        
+
     # ==========================================
     # WORKER METHODS
     # ==========================================
@@ -238,8 +238,8 @@ class DatabaseManager:
         with self._get_conn() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT id, chat_id, content, timestamp, status 
-                FROM message 
+                SELECT id, chat_id, content, timestamp, status
+                FROM message
                 WHERE status = 'OUTGOING_CREATED'
             ''')
             return [dict(row) for row in cursor.fetchall()]

@@ -27,17 +27,17 @@ my_onion_address = None
 # ==========================================
 # SECURITY MIDDLEWARE (IPC)
 # ==========================================
-# Ephemeraler API-Key 
-EPHEMERAL_API_KEY = str(uuid.uuid4()) 
+# Ephemeraler API-Key
+EPHEMERAL_API_KEY = str(uuid.uuid4())
 # disabled for now
-REQUIRE_API_KEY = False 
+REQUIRE_API_KEY = False
 
 @app.before_request
 def require_api_key():
     """Check API-key before every frontend request"""
     if request.path == '/api/receive_message':
         return
-        
+
     if REQUIRE_API_KEY:
         key = request.headers.get('X-Aether-API-Key')
         if key != EPHEMERAL_API_KEY:
@@ -54,13 +54,13 @@ def register():
     data = request.json
     username = data.get('username')
     password = data.get('password') # placeholder for SQLCipher key
-    
+
     if not username:
         return jsonify({"error": "Username is required"}), 400
-        
+
     db_file = f"{username}.aetherdb"
-    db_manager = DatabaseManager(db_file) 
-    
+    db_manager = DatabaseManager(db_file)
+
     # generate Tor Keys and Onion Addresss
     app.logger.info("[*] Creating new Tor Identity for new user...")
     onion, key_type, private_key = network_utility.start_onion_service(flask_port=5000)
@@ -68,8 +68,8 @@ def register():
         db_manager.save_identity(onion, private_key, username)
         my_onion_address = onion
         return jsonify({
-            "status": "success", 
-            "message": "Profile created.", 
+            "status": "success",
+            "message": "Profile created.",
             "onion_address": onion
         }), 201
     else:
@@ -81,16 +81,16 @@ def login():
     global db_manager, network_utility, my_onion_address
     data = request.json
     username = data.get('username')
-    
+
     if not username:
         return jsonify({"error": "Username is required"}), 400
-        
+
     app.logger.info(f"[*] Login attempt for user: {username}")
-    
+
     db_file = f"{username}.aetherdb"
     db_manager = DatabaseManager(db_file)
     identity = db_manager.load_identity()
-    
+
     if identity and my_onion_address == identity['onion_address']:
         return jsonify({"status": "success", "message": "Database unlocked.", "onion_address": my_onion_address}), 200
 
@@ -100,7 +100,7 @@ def login():
             network_utility.controller.remove_ephemeral_hidden_service(my_onion_address)
         except Exception as e:
             app.logger.warning(f"[*] Error removing old Tor Service: {e}")
-    
+
     if identity:
         app.logger.info("[*] Loading existing Tor identity...")
         onion, key_type, private_key = network_utility.start_onion_service(
@@ -111,7 +111,7 @@ def login():
         if onion:
             my_onion_address = onion
             return jsonify({"status": "success", "message": "Database unlocked.", "onion_address": onion}), 200
-            
+
     return jsonify({"error": "Tor Service failed to start or Identity missing"}), 500
 
 @app.route('/api/v1/auth/logout', methods=['POST'])
@@ -122,7 +122,7 @@ def logout():
     my_onion_address = None
     if network_utility and hasattr(network_utility, 'controller'):
         # stop hidden service and clear state
-        pass 
+        pass
     app.logger.info("[*] User logged out. RAM wiped.")
     return jsonify({"status": "success"}), 200
 
@@ -134,12 +134,12 @@ def get_contacts():
     """Return list of contacts"""
     if not db_manager:
         return jsonify({"error": "Database not initialized"}), 500
-        
+
     with db_manager._get_conn() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id, onion_address, display_name FROM contact")
         contacts = [dict(row) for row in cursor.fetchall()]
-        
+
     return jsonify(contacts), 200
 
 @app.route('/api/v1/contacts', methods=['POST'])
@@ -158,8 +158,8 @@ def create_contact():
         return jsonify({"error": "Contact with this onion address already exists"}), 409
 
     return jsonify({
-        "id": contact_id, 
-        "onion_address": data['onion_address'], 
+        "id": contact_id,
+        "onion_address": data['onion_address'],
         "display_name": data['display_name']
     }), 201
 
@@ -231,18 +231,18 @@ def send_message():
     chat_id = data['chat_id']
     content = data['content']
     # UTC
-    timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ') 
+    timestamp = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
 
     msg_id = db_manager.save_message(
-        chat_id=chat_id, 
-        content=content, 
-        timestamp=timestamp, 
-        status="OUTGOING_CREATED", 
+        chat_id=chat_id,
+        content=content,
+        timestamp=timestamp,
+        status="OUTGOING_CREATED",
         sender_contact_id=None # None = sent from local user
     )
 
     app.logger.info(f"[*] Frontend queued message for Chat {chat_id}")
-    
+
     return jsonify({"message_id": msg_id, "status": "OUTGOING_CREATED"}), 201
 
 @app.route('/api/v1/messages/<int:message_id>', methods=['DELETE'])
@@ -250,7 +250,7 @@ def delete_specific_message(message_id):
     """Delete specific message"""
     if not db_manager:
         return jsonify({"error": "Database not initialized"}), 500
-        
+
     with db_manager._get_conn() as conn:
         conn.execute("DELETE FROM message WHERE id = ?", (message_id,))
         conn.commit()
@@ -273,14 +273,14 @@ def system_sync():
     """Polling Endpoint for svelte stores"""
     if not db_manager:
         return jsonify({"error": "Database not initialized"}), 500
-        
+
     since = request.args.get('since', '1970-01-01T00:00:00Z')
-    
+
     with db_manager._get_conn() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id, chat_id, sender_contact_id, content, timestamp, status FROM message WHERE timestamp > ? AND sender_contact_id NOT NULL", (since,))
         new_messages = [dict(row) for row in cursor.fetchall()]
-        
+
     return jsonify({
         "new_messages": new_messages,
         "status_updates": [] # placeholder for status changes by worker
@@ -289,15 +289,15 @@ def system_sync():
 @app.route('/api/v1/export', methods=['POST'])
 def export_profile():
     """generate AES-encrypted DB Backup"""
-    global db_manager 
-    
+    global db_manager
+
     if not db_manager:
         return jsonify({"error": "User not logged in"}), 401
 
     data = request.json
-    
-    backup_password = data.get('export_password') 
-    
+
+    backup_password = data.get('export_password')
+
     if not backup_password:
         return jsonify({"error": "export password required"}), 400
 
@@ -305,7 +305,7 @@ def export_profile():
     username = db_file.replace('.aetherdb', '').replace('data/', '')
 
     export_dir = "data"
-    
+
     if not os.path.exists(export_dir):
         os.makedirs(export_dir)
 
@@ -313,9 +313,9 @@ def export_profile():
 
     try:
         app.logger.info(f"[*] Start AES encrypted Backup for user {username}...")
-        
+
         salt = os.urandom(16)
-        
+
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
@@ -336,7 +336,7 @@ def export_profile():
         app.logger.info(f"[*] Backup successfully generated: {backup_file}")
 
         return jsonify({
-            "status": "success", 
+            "status": "success",
             "message": "backup successful",
             "file_path": os.path.abspath(backup_file)
         }), 200
@@ -344,7 +344,7 @@ def export_profile():
     except Exception as e:
         app.logger.error(f"[*] ERROR: {e}")
         return jsonify({"error": "Internal Error during Backup"}), 500
-    
+
 # ==========================================
 # P2P Endpoints (Tor-Network -> Backend)
 # NOT API Key protected
@@ -368,7 +368,7 @@ def receive_message_from_peer():
     # find chat and contact id of sender
     chat_id = db_manager.get_chat_id_by_onion(sender_onion)
     contact_id = None
-    
+
     with db_manager._get_conn() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT id FROM contact WHERE onion_address = ?", (sender_onion,))
@@ -381,13 +381,13 @@ def receive_message_from_peer():
         return jsonify({"error": "Unauthorized / Unknown Contact"}), 403
 
     db_manager.save_message(
-        chat_id=chat_id, 
-        content=text, 
+        chat_id=chat_id,
+        content=text,
         timestamp=timestamp,
-        status="INCOMING_UNREAD", 
+        status="INCOMING_UNREAD",
         sender_contact_id=contact_id
     )
-    
+
     return jsonify({"status": "ok"}), 200
 
 # ==========================================
@@ -400,5 +400,5 @@ def run_flask_server(port, net_util):
     app.logger.info(f"[*] Initializing System...")
     app.logger.info(f"[*] Ephemeral API Key for Frontend: {EPHEMERAL_API_KEY}")
     app.logger.info(f"[*] Start API Controller on Port {port}...")
-    
+
     app.run(host='0.0.0.0', port=port, use_reloader=False)
